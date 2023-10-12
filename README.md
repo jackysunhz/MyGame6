@@ -1,10 +1,9 @@
-# (TODO: your game's title)
+# 2 Player Table Hockey
 
-Author: (TODO: your name)
+Author: Jacky Sun
 
-Design: (TODO: In two sentences or fewer, describe what is new and interesting about your game.)
-
-Networking: (TODO: How does your game implement client/server multiplayer? What messages are transmitted? Where in the code?)
+Design: 2 player table hockey, bounce the hockey into opponent's goal.
+Networking: In Game.cpp, I added the logic for calculating hockey physics as well as player scores, and when sending game status I am also sending hockey's velocity, position and player scores.
 
 Screen Shot:
 
@@ -12,9 +11,7 @@ Screen Shot:
 
 How To Play:
 
-(TODO: describe the controls and (if needed) goals/strategy.)
-
-Sources: (TODO: list a source URL for any assets you did not create yourself. Make sure you have a license for the asset.)
+Use WASD to control your player and try to score.
 
 This game was built with [NEST](NEST.md).
 

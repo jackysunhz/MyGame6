@@ -82,8 +82,16 @@ Player *Game::spawn_player() {
 	Player &player = players.back();
 
 	//random point in the middle area of the arena:
+	float offset = (ArenaMax.y - ArenaMin.y)/2.f - PlayerRadius * 4;
+	
 	player.position.x = glm::mix(ArenaMin.x + 2.0f * PlayerRadius, ArenaMax.x - 2.0f * PlayerRadius, 0.4f + 0.2f * mt() / float(mt.max()));
 	player.position.y = glm::mix(ArenaMin.y + 2.0f * PlayerRadius, ArenaMax.y - 2.0f * PlayerRadius, 0.4f + 0.2f * mt() / float(mt.max()));
+
+	if(players.size() == 1){
+		player.position.y += offset;
+	}else{
+		player.position.y -= offset;
+	}
 
 	do {
 		player.color.r = mt() / float(mt.max());
@@ -109,7 +117,29 @@ void Game::remove_player(Player *player) {
 	assert(found);
 }
 
+Item *Game::spawn_item()
+{
+    items.emplace_back();
+	Item &item = items.back();
+
+	//random point in the middle area of the arena:
+	item.position.x = glm::mix(ArenaMin.x + 2.0f * PlayerRadius, ArenaMax.x - 2.0f * PlayerRadius, 0.4f + 0.2f * mt() / float(mt.max()));
+	item.position.y = glm::mix(ArenaMin.y + 2.0f * PlayerRadius, ArenaMax.y - 2.0f * PlayerRadius, 0.4f + 0.2f * mt() / float(mt.max()));
+
+	item.color = glm::uvec4(55,200, 233, 255);
+
+	return &item;
+}
+
+void Game::remove_item(Item *)
+{
+	items.pop_back();
+}
+
 void Game::update(float elapsed) {
+	if(items.empty()){
+		spawn_item();
+	}
 	//position/velocity update:
 	for (auto &p : players) {
 		glm::vec2 dir = glm::vec2(0.0f, 0.0f);
@@ -150,6 +180,12 @@ void Game::update(float elapsed) {
 		p.controls.jump.downs = 0;
 	}
 
+	for(auto &i: items){
+		float amt = 1.0f - std::pow(0.5f, elapsed / (PlayerAccelHalflife * 6.0f));
+		i.velocity = glm::mix(i.velocity, glm::vec2(0.0f,0.0f), amt);
+		i.position += i.velocity * elapsed;
+	}
+
 	//collision resolution:
 	for (auto &p1 : players) {
 		//player/player collisions:
@@ -183,6 +219,50 @@ void Game::update(float elapsed) {
 			p1.position.y = ArenaMax.y - PlayerRadius;
 			p1.velocity.y =-std::abs(p1.velocity.y);
 		}
+		//player/item collisions:
+		for (auto &i : items) {
+			glm::vec2 p12 = i.position - p1.position;
+			float len2 = glm::length2(p12);
+			if (len2 > (3.0f * PlayerRadius) * (3.0f * PlayerRadius)) continue;
+			if (len2 == 0.0f) continue;
+			glm::vec2 dir = p12 / std::sqrt(len2);
+			//mirror velocity to be in separating direction:
+			glm::vec2 v12 = i.velocity - p1.velocity;
+			glm::vec2 delta_v12 = dir * glm::max(0.0f, -1.75f * glm::dot(dir, v12));
+			i.velocity += 0.8f * delta_v12;
+			p1.velocity -= 0.5f * delta_v12;
+		}
+	}
+	//item/arena collisions:
+	for (auto &i : items) {
+		if (i.position.x < ArenaMin.x + 2 * PlayerRadius) {
+			i.position.x = ArenaMin.x + 2 * PlayerRadius;
+			i.velocity.x = std::abs(i.velocity.x);
+		}
+		if (i.position.x > ArenaMax.x - 2 *PlayerRadius) {
+			i.position.x = ArenaMax.x - 2 *PlayerRadius;
+			i.velocity.x =-std::abs(i.velocity.x);
+		}
+		if (i.position.y < ArenaMin.y + 2 *PlayerRadius) {//hit lower bound
+			if(i.position.x > ArenaMin.x + 8 *PlayerRadius && i.position.x < ArenaMax.x - 8 *PlayerRadius){//goal
+				//player1 score
+				p1_score++;
+				remove_item(&i);
+				break;
+			}
+			i.position.y = ArenaMin.y + 2 *PlayerRadius;
+			i.velocity.y = std::abs(i.velocity.y);
+		}
+		if (i.position.y > ArenaMax.y - 2 *PlayerRadius) {
+			if(i.position.x > ArenaMin.x + 8 *PlayerRadius && i.position.x < ArenaMax.x - 8 *PlayerRadius){//goal
+				//player2 score;
+				p2_score++;
+				remove_item(&i);
+				break;
+			}
+			i.position.y = ArenaMax.y - 2 *PlayerRadius;
+			i.velocity.y =-std::abs(i.velocity.y);
+		}
 	}
 
 }
@@ -213,6 +293,12 @@ void Game::send_state_message(Connection *connection_, Player *connection_player
 		connection.send_buffer.insert(connection.send_buffer.end(), player.name.begin(), player.name.begin() + len);
 	};
 
+	auto send_item = [&](Item const &item) {
+		connection.send(item.position);
+		connection.send(item.velocity);
+		connection.send(item.color);
+	};
+
 	//player count:
 	connection.send(uint8_t(players.size()));
 	if (connection_player) send_player(*connection_player);
@@ -220,6 +306,15 @@ void Game::send_state_message(Connection *connection_, Player *connection_player
 		if (&player == connection_player) continue;
 		send_player(player);
 	}
+
+	connection.send(uint8_t(items.size()));
+	for (auto const &item : items)
+	{
+		send_item(item);
+	}
+
+	connection.send(p1_score);
+	connection.send(p2_score);
 
 	//compute the message size and patch into the message header:
 	uint32_t size = uint32_t(connection.send_buffer.size() - mark);
@@ -270,6 +365,20 @@ bool Game::recv_state_message(Connection *connection_) {
 			player.name += c;
 		}
 	}
+
+	items.clear();
+	uint8_t item_count;
+	read(&item_count);
+	for (uint8_t i = 0; i < item_count; ++i){
+		items.emplace_back();
+		Item &item = items.back();
+		read(&item.position);
+		read(&item.velocity);
+		read(&item.color);
+	}
+
+	read(&p1_score);
+	read(&p2_score);
 
 	if (at != size) throw std::runtime_error("Trailing data in state message.");
 

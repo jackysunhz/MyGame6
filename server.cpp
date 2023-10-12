@@ -48,6 +48,9 @@ int main(int argc, char **argv) {
 	//keep track of game state:
 	Game game;
 
+	//spawn some items:
+	game.spawn_item();
+
 	while (true) {
 		static auto next_tick = std::chrono::steady_clock::now() + std::chrono::duration< double >(Game::Tick);
 		//process incoming data from clients until a tick has elapsed:
